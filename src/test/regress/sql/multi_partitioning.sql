@@ -1127,6 +1127,23 @@ GROUP BY
 ORDER BY
 	1,2;
 
+
+-- test attaching and detaching partitions from partitioned tables with foreign keys
+DROP TABLE reference_table CASCADE;
+CREATE TABLE reference_table(id int PRIMARY KEY);
+SELECT create_reference_table('reference_table');
+
+CREATE TABLE partitioning_test(id int, time date) PARTITION BY RANGE (time);
+CREATE TABLE partitioning_test_2009 (LIKE partitioning_test);
+
+ALTER TABLE partitioning_test ADD CONSTRAINT partitioning_reference_fkey FOREIGN KEY (id) REFERENCES reference_table(id) ON DELETE CASCADE;
+ALTER TABLE partitioning_test_2009 ADD CONSTRAINT partitioning_reference_fkey_2009 FOREIGN KEY (id) REFERENCES reference_table(id) ON DELETE CASCADE;
+
+ALTER TABLE partitioning_test ATTACH PARTITION partitioning_test_2009 FOR VALUES FROM ('2009-01-01') TO ('2010-01-01');
+ALTER TABLE partitioning_test DETACH PARTITION partitioning_test_2009;
+
+DROP TABLE partitioning_test, partitioning_test_2009, reference_table;
+
 DROP SCHEMA partitioning_schema CASCADE;
 RESET SEARCH_PATH;
 DROP TABLE IF EXISTS

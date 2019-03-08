@@ -29,6 +29,7 @@
 #include "distributed/multi_router_planner.h"
 #include "distributed/recursive_planning.h"
 #include "distributed/shardinterval_utils.h"
+#include "distributed/commands/utility_hook.h"
 #include "distributed/worker_shard_visibility.h"
 #include "executor/executor.h"
 #include "nodes/makefuncs.h"
@@ -48,6 +49,13 @@
 static List *plannerRestrictionContextList = NIL;
 int MultiTaskQueryLogLevel = MULTI_TASK_QUERY_INFO_OFF; /* multi-task query log level */
 static uint64 NextPlanId = 1;
+
+/*
+ * In some cases we might need to temporarily disable distributed planning.
+ * An example usecase is skipping constraint checking for ALTER TABLE in
+ * the coordinator node. See the related comments in multi_ProcessUtility().
+ */
+bool distributedPlannerEnabled = true;
 
 
 /* local function forward declarations */
@@ -97,10 +105,49 @@ distributed_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	Query *originalQuery = NULL;
 	PlannerRestrictionContext *plannerRestrictionContext = NULL;
 	bool setPartitionedTablesInherited = false;
+	bool constraintCheckQuery = false;
 
 	if (cursorOptions & CURSOR_OPT_FORCE_DISTRIBUTED)
 	{
 		needsDistributedPlanning = true;
+	}
+
+	if (AlterTableInProgress() && parse->commandType == CMD_SELECT &&
+		needsDistributedPlanning)
+	{
+		constraintCheckQuery = true;
+
+		/*
+		 * Disable distributed planning for ALTER TABLE constraint validation
+		 * queries. These constraints will be validated in worker nodes, so
+		 * no need to run expensive distributed queries from coordinator.
+		 *
+		 * For example, ALTER TABLE ... ATTACH PARTITION checks that the new
+		 * partition doesn't violate constraints of the parent table, which
+		 * might involve running some SELECT queries. Ideally we'd completely
+		 * skip these checks in the coordinator, but we don't have any means to
+		 * tell postgres to skip the checks. So the best we can do is to execute
+		 * these queries locally.
+		 *
+		 * See the comments for distributedPlannerEnabled for more information.
+		 */
+		needsDistributedPlanning = false;
+
+		/*
+		 * To make constraint checks succeed, these queries should return empty
+		 * results. We don't truncate local data after a distributing a table,
+		 * so running the query as it is might return a non-empty result. We
+		 * inject "LIMIT 0" so it returns an empty result. Also postgres optimizes
+		 * these cases and doesn't run the query at all.
+		 */
+		parse->limitOffset = (Node *) makeConst(INT8OID, -1, InvalidOid,
+												sizeof(int64),
+												Int64GetDatum(0), false,
+												FLOAT8PASSBYVAL);
+		parse->limitCount = (Node *) makeConst(INT8OID, -1, InvalidOid,
+											   sizeof(int64),
+											   Int64GetDatum(0), false,
+											   FLOAT8PASSBYVAL);
 	}
 
 	if (needsDistributedPlanning)
@@ -191,7 +238,8 @@ distributed_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	 * standart_planner performs some modifications on parse tree. In such cases
 	 * we will simply error out.
 	 */
-	if (!needsDistributedPlanning && NeedsDistributedPlanning(parse))
+	if (!needsDistributedPlanning && NeedsDistributedPlanning(parse) &&
+		!constraintCheckQuery)
 	{
 		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						errmsg("cannot perform distributed planning on this "
