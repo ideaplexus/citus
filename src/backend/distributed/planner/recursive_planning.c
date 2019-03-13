@@ -158,6 +158,7 @@ static void RecursivelyPlanSetOperations(Query *query, Node *node,
 static bool IsLocalTableRTE(Node *node);
 static void RecursivelyPlanSubquery(Query *subquery,
 									RecursivePlanningContext *planningContext);
+static bool QueryAlreadyRecursivelyPlanned(Query *subquery);
 static DistributedSubPlan * CreateDistributedSubPlan(uint32 subPlanId,
 													 Query *subPlanQuery);
 static bool CteReferenceListWalker(Node *node, CteReferenceWalkerContext *context);
@@ -1113,6 +1114,14 @@ RecursivelyPlanSubquery(Query *subquery, RecursivePlanningContext *planningConte
 		return;
 	}
 
+	if (QueryAlreadyRecursivelyPlanned(subquery))
+	{
+		elog(DEBUG2, "skipping recursive planning for the subquery since it "
+					 "has already been recursively planned");
+
+		return;
+	}
+
 	/*
 	 * Subquery will go through the standard planner, thus to properly deparse it
 	 * we keep its copy: debugQuery.
@@ -1152,6 +1161,50 @@ RecursivelyPlanSubquery(Query *subquery, RecursivePlanningContext *planningConte
 
 	/* finally update the input subquery to point the result query */
 	memcpy(subquery, resultQuery, sizeof(Query));
+}
+
+
+/*
+ * QueryAlreadyRecursivelyPlanned returns true if the input query
+ * is a subquery that is already recursively planned.
+ */
+static bool
+QueryAlreadyRecursivelyPlanned(Query *subquery)
+{
+	List *rtable = subquery->rtable;
+	RangeTblEntry *rangeTableEntry = NULL;
+	RangeTblFunction *rteFunction = NULL;
+	FuncExpr *funcExpr = NULL;
+
+	if (list_length(rtable) != 1)
+	{
+		return false;
+	}
+
+	rangeTableEntry = (RangeTblEntry *) linitial(rtable);
+	if (rangeTableEntry->rtekind != RTE_FUNCTION)
+	{
+		return false;
+	}
+
+	if (list_length(rangeTableEntry->functions) != 1)
+	{
+		return false;
+	}
+
+	rteFunction = (RangeTblFunction *) linitial(rangeTableEntry->functions);
+	if (!IsA(rteFunction->funcexpr, FuncExpr))
+	{
+		return false;
+	}
+
+	funcExpr = (FuncExpr *) rteFunction->funcexpr;
+	if (funcExpr->funcid != CitusReadIntermediateResultFuncId())
+	{
+		return false;
+	}
+
+	return true;
 }
 
 

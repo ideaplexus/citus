@@ -691,6 +691,22 @@ SELECT true AS valid FROM explain_json_2($$
       AND foo.user_id = bar.value_2;
 $$);
 
+-- make sure to skip calling recursive planning over and over again
+-- for already recursively planned subqueries
+SET client_min_messages TO DEBUG2;
+SELECT *
+FROM
+  (SELECT *
+   FROM users_table
+   OFFSET 0) AS users_table
+JOIN LATERAL
+  (SELECT *
+   FROM
+     (SELECT *
+      FROM events_table
+      WHERE user_id = users_table.user_id) AS bar
+   LEFT JOIN users_table u2 ON u2.user_id = bar.value_2) AS foo ON TRUE;
+
 RESET client_min_messages;
 DROP FUNCTION explain_json_2(text);
 
