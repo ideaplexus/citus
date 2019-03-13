@@ -1128,7 +1128,8 @@ ORDER BY
 	1,2;
 
 
--- test attaching and detaching partitions from partitioned tables with foreign keys
+-- test we don't deadlock when attaching and detaching partitions from partitioned
+-- tables with foreign keys
 DROP TABLE reference_table CASCADE;
 CREATE TABLE reference_table(id int PRIMARY KEY);
 SELECT create_reference_table('reference_table');

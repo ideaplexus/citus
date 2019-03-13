@@ -50,13 +50,6 @@ static List *plannerRestrictionContextList = NIL;
 int MultiTaskQueryLogLevel = MULTI_TASK_QUERY_INFO_OFF; /* multi-task query log level */
 static uint64 NextPlanId = 1;
 
-/*
- * In some cases we might need to temporarily disable distributed planning.
- * An example usecase is skipping constraint checking for ALTER TABLE in
- * the coordinator node. See the related comments in multi_ProcessUtility().
- */
-bool distributedPlannerEnabled = true;
-
 
 /* local function forward declarations */
 static bool NeedsDistributedPlanningWalker(Node *node, void *context);
@@ -128,8 +121,6 @@ distributed_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 		 * skip these checks in the coordinator, but we don't have any means to
 		 * tell postgres to skip the checks. So the best we can do is to execute
 		 * these queries locally.
-		 *
-		 * See the comments for distributedPlannerEnabled for more information.
 		 */
 		needsDistributedPlanning = false;
 
